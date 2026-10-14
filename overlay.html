@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Webcam Overlay</title>
+  <style>
+    /* Fully transparent, click-through layer covering the whole screen. */
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; pointer-events: none; }
+    .tile { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; display: none; }
+    .tile img { width: 100%; height: 100%; object-fit: cover; display: block; box-sizing: border-box;
+                border: 2px solid #bb99ff; border-radius: 6px; background: #000; }
+    .tile .name { position: absolute; left: 0; right: 0; top: 100%; text-align: center;
+                  font: 12px sans-serif; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="module">
+    import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm";
+
+    const CHANNEL = "com.example.webcam-tokens/frame"; // webcam frames (broadcast)
+    const META = "com.example.webcam-tokens/tile";     // marks a webcam placeholder on the board
+    const STALE_MS = 3000;                             // hide a tile if no frame for 3s
+
+    const root = document.getElementById("root");
+    const frames = new Map(); // playerId -> { frame, at }
+    const tiles = new Map();  // placeholder item id -> { el, img, name, src }
+    let placeholders = [];    // current webcam placeholder items in the scene
+
+    OBR.onReady(() => {
+      // Latest webcam frame for each player (the sender's popover broadcasts to ALL, incl. us).
+      OBR.broadcast.onMessage(CHANNEL, (event) => {
+        const { playerId, frame, stop } = event.data;
+        if (stop) frames.delete(playerId);
+        else if (frame) frames.set(playerId, { frame, at: Date.now() });
+      });
+
+      // Keep track of the placeholders (normal shared board items players can drag).
+      const setItems = (items) => {
+        placeholders = items.filter((i) => i.metadata && i.metadata[META]);
+      };
+      const load = () => OBR.scene.items.getItems().then(setItems);
+      OBR.scene.isReady().then((ready) => ready && load());
+      OBR.scene.onReadyChange((ready) => (ready ? load() : (placeholders = [])));
+      OBR.scene.items.onChange(setItems);
+
+      loop();
+    });
+
+    // There is no "viewport changed" event, so we poll every animation frame.
+    async function loop() {
+      try {
+        // Where the board origin and the point (1,0) land on screen -> origin + pixels per board unit.
+        const [o, u] = await Promise.all([
+          OBR.viewport.transformPoint({ x: 0, y: 0 }),
+          OBR.viewport.transformPoint({ x: 1, y: 0 }),
+        ]);
+        render(o, u.x - o.x);
+      } catch (e) { /* scene not ready yet */ }
+      requestAnimationFrame(loop);
+    }
+
+    function makeTile() {
+      const el = document.createElement("div");
+      el.className = "tile";
+      const img = document.createElement("img");
+      const name = document.createElement("div");
+      name.className = "name";
+      el.append(img, name);
+      root.appendChild(el);
+      return { el, img, name, src: "" };
+    }
+
+    function render(origin, scale) {
+      const now = Date.now();
+      const seen = new Set();
+
+      for (const item of placeholders) {
+        seen.add(item.id);
+        let t = tiles.get(item.id);
+        if (!t) tiles.set(item.id, (t = makeTile()));
+
+        const f = frames.get(item.metadata[META].playerId);
+        if (!f || now - f.at > STALE_MS || item.visible === false) {
+          t.el.style.display = "none"; // no live video: the plain placeholder shows through
+          continue;
+        }
+
+        // Board coordinates -> screen pixels.
+        const x = origin.x + item.position.x * scale;
+        const y = origin.y + item.position.y * scale;
+        t.el.style.display = "block";
+        t.el.style.width = item.width * item.scale.x * scale + "px";
+        t.el.style.height = item.height * item.scale.y * scale + "px";
+        t.el.style.transform = `translate(${x}px, ${y}px) rotate(${item.rotation}deg)`;
+        if (t.src !== f.frame) { t.img.src = f.frame; t.src = f.frame; }
+        t.name.textContent = item.name || "";
+      }
+
+      // Remove tiles whose placeholder was deleted.
+      for (const [id, t] of tiles) {
+        if (!seen.has(id)) { t.el.remove(); tiles.delete(id); }
+      }
+    }
+  </script>
+</body>
+</html>

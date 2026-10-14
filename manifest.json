@@ -1,15 +1,16 @@
 {
   "name": "Webcam Tokens",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "manifest_version": 1,
-  "description": "Streams your live webcam onto your token as a tiny, low-FPS image.",
+  "description": "Live webcam frames that players can drag around the board.",
   "author": "Your Name",
   "icon": "https://robertquizemail-eng.github.io/OwlBear_RODEO-VIDEO/icon.svg",
+  "background_url": "https://robertquizemail-eng.github.io/OwlBear_RODEO-VIDEO/background.html",
   "action": {
     "title": "Webcam Tokens",
     "icon": "https://robertquizemail-eng.github.io/OwlBear_RODEO-VIDEO/icon.svg",
     "popover": "https://robertquizemail-eng.github.io/OwlBear_RODEO-VIDEO/index.html",
-    "height": 190,
+    "height": 280,
     "width": 300
   }
 }

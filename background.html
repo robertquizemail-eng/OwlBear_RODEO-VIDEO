@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /><title>Webcam Tokens Background</title></head>
+<body>
+  <script type="module">
+    // Runs for every player as soon as the extension is enabled in the room.
+    // Its only job is to open the transparent, click-through webcam layer.
+    import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm";
+
+    const MODAL_ID = "com.example.webcam-tokens/overlay";
+    let opened = false;
+
+    async function openOverlay() {
+      if (opened) return;
+      try {
+        await OBR.modal.open({
+          id: MODAL_ID,
+          url: new URL("overlay.html", location.href).href,
+          fullScreen: true,       // covers the whole screen...
+          hideBackdrop: true,     // ...with no dark backdrop...
+          hidePaper: true,        // ...and no background panel...
+          disablePointerEvents: true, // ...and clicks go through to the board
+        });
+        opened = true;
+      } catch (e) {
+        console.warn("Could not open webcam layer", e);
+      }
+    }
+
+    OBR.onReady(() => {
+      openOverlay();
+      OBR.scene.onReadyChange((ready) => ready && openOverlay());
+    });
+  </script>
+</body>
+</html>
