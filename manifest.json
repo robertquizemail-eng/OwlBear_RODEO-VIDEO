@@ -1,0 +1,15 @@
+{
+  "name": "Webcam Tokens",
+  "version": "1.0.1",
+  "manifest_version": 1,
+  "description": "Streams your live webcam onto your token as a tiny, low-FPS image.",
+  "author": "Your Name",
+  "icon": "https://robertquizemail-eng.github.io/OwlBear_RODEO-VIDEO/icon.svg",
+  "action": {
+    "title": "Webcam Tokens",
+    "icon": "https://robertquizemail-eng.github.io/OwlBear_RODEO-VIDEO/icon.svg",
+    "popover": "https://robertquizemail-eng.github.io/OwlBear_RODEO-VIDEO/index.html",
+    "height": 190,
+    "width": 300
+  }
+}
