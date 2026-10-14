@@ -1,0 +1,15 @@
+{
+  "name": "Webcam Tokens",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "description": "Streams your live webcam onto your token as a tiny, low-FPS image.",
+  "author": "Your Name",
+  "icon": "/icon.svg",
+  "action": {
+    "title": "Webcam Tokens",
+    "icon": "/icon.svg",
+    "popover": "/index.html",
+    "height": 190,
+    "width": 300
+  }
+}
