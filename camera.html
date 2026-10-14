@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Webcam Tokens - Camera</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 12px; color: #fff; background: #222639; text-align: center; }
+    video { width: 128px; height: 128px; object-fit: cover; border-radius: 8px; background: #000; display: block; margin: 0 auto 10px; }
+    button { width: 100%; padding: 8px; margin-bottom: 8px; border-radius: 6px; border: 0; font-size: 14px; font-weight: bold; cursor: pointer; background: #bb99ff; color: #222639; }
+    button.stop { background: #ff6b6b; }
+    button:disabled { opacity: .5; cursor: default; }
+    #status { font-size: 12px; opacity: .85; min-height: 32px; }
+  </style>
+</head>
+<body>
+  <!-- Local preview so you can see what is being sent -->
+  <video id="video" autoplay playsinline muted></video>
+  <button id="startBtn" disabled>Start Camera</button>
+  <button id="stopBtn" class="stop" style="display:none">Stop &amp; Close</button>
+  <div id="status">Connecting to Owlbear...</div>
+
+  <canvas id="canvas" style="display:none"></canvas>
+
+  <script>
+    // This window exists only because Owlbear's extension iframe is not allowed to
+    // use the camera. A normal browser window is allowed, so we capture here and
+    // hand each frame back to the Owlbear popover (window.opener), which relays it.
+
+    // Defaults; the popover overwrites these with its own config when we say "ready".
+    let SIZE = 128, FPS = 10, QUALITY = 0.3;
+
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const statusEl = document.getElementById("status");
+
+    let stream = null;
+    let timer = null;
+    const setStatus = (t) => (statusEl.textContent = t);
+
+    // --- Handshake with the popover --------------------------------------
+    if (!window.opener) {
+      setStatus("This window must be opened from the Webcam Tokens popover in Owlbear.");
+    } else {
+      window.addEventListener("message", (e) => {
+        if (e.source !== window.opener) return; // only trust our opener
+        if (e.data && e.data.type === "config") {
+          SIZE = e.data.size; FPS = e.data.fps; QUALITY = e.data.quality;
+          canvas.width = SIZE; canvas.height = SIZE;
+          startBtn.disabled = false;
+          setStatus("Ready. Click Start Camera.");
+        }
+      });
+      window.opener.postMessage({ type: "ready" }, "*");
+    }
+
+    // --- Capture loop ----------------------------------------------------
+    function captureAndSend() {
+      if (video.readyState < 2 || !window.opener || window.opener.closed) return;
+
+      // Centre-crop to a square and scale down to SIZE x SIZE
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const side = Math.min(vw, vh);
+      ctx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, SIZE, SIZE);
+
+      // Low-quality JPEG as a Base64 data URL (a few KB per frame)
+      const frame = canvas.toDataURL("image/jpeg", QUALITY);
+      window.opener.postMessage({ type: "frame", frame }, "*");
+    }
+
+    startBtn.addEventListener("click", async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: SIZE }, height: { ideal: SIZE }, frameRate: { ideal: FPS } },
+          audio: false,
+        });
+      } catch (e) {
+        return setStatus("Camera error: " + e.message);
+      }
+      video.srcObject = stream;
+      await video.play();
+      timer = setInterval(captureAndSend, 1000 / FPS);
+      startBtn.style.display = "none";
+      stopBtn.style.display = "block";
+      setStatus("Live! Keep this window open and the Owlbear popover open.");
+    });
+
+    // Closing this window is the "stop" signal: the popover notices and restores the token.
+    stopBtn.addEventListener("click", () => window.close());
+    window.addEventListener("beforeunload", () => {
+      clearInterval(timer);
+      stream?.getTracks().forEach((t) => t.stop());
+    });
+  </script>
+</body>
+</html>

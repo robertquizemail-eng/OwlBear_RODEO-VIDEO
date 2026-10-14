@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Webcam Tokens</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 12px; color: #fff; background: #222639; }
+    label { display: block; font-size: 12px; margin-bottom: 4px; opacity: .8; }
+    select, button { width: 100%; padding: 8px; margin-bottom: 10px; border-radius: 6px; border: 0; font-size: 14px; }
+    button { background: #bb99ff; color: #222639; font-weight: bold; cursor: pointer; }
+    button.live { background: #ff6b6b; }
+    #status { font-size: 12px; opacity: .8; min-height: 16px; }
+  </style>
+</head>
+<body>
+  <label for="tokenSelect">Select My Token</label>
+  <select id="tokenSelect"></select>
+
+  <button id="camBtn">Start Camera</button>
+  <div id="status"></div>
+
+  <script type="module">
+    // The SDK ships as an ES module; this CDN build works in a plain <script type="module"> tag.
+    import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm";
+
+    // ---- Config -------------------------------------------------------------
+    const CHANNEL = "com.example.webcam-tokens/frame"; // broadcast channel name
+    const SIZE = 128;      // capture resolution (SIZE x SIZE)
+    const FPS = 10;        // frames per second
+    const QUALITY = 0.3;   // JPEG quality (0-1); low = small messages = low latency
+
+    // ---- DOM ----------------------------------------------------------------
+    const select = document.getElementById("tokenSelect");
+    const btn = document.getElementById("camBtn");
+    const statusEl = document.getElementById("status");
+    const setStatus = (t) => (statusEl.textContent = t);
+
+    // ---- State --------------------------------------------------------------
+    let myId = null;          // this player's Owlbear ID
+    let popup = null;         // the camera pop-out window
+    let watchTimer = null;    // polls whether the pop-out was closed
+    let activeTokenId = null; // token currently being streamed
+    // The original artwork URL is stored in the token's own metadata (see applyFrame),
+    // so ANY client can restore it, even after a reload or crash.
+    const META_KEY = "com.example.webcam-tokens/original";
+    const busy = new Set();         // tokenIds with an update in flight (drop frames instead of queueing)
+
+    // ---- Token dropdown -----------------------------------------------------
+    async function refreshTokens() {
+      const items = await OBR.scene.items.getItems(
+        (i) => i.layer === "CHARACTER" && i.type === "IMAGE"
+      );
+      const previous = select.value;
+      select.innerHTML = "";
+      for (const item of items) {
+        const opt = document.createElement("option");
+        opt.value = item.id;
+        opt.textContent = item.name || `Token ${item.id.slice(0, 6)}`;
+        select.appendChild(opt);
+      }
+      if (items.some((i) => i.id === previous)) select.value = previous;
+      if (!items.length) setStatus("No tokens found in this scene.");
+    }
+
+    // ---- Applying frames to tokens (runs on every client) ------------------
+    async function applyFrame(tokenId, frame) {
+      if (busy.has(tokenId)) return; // previous update still pending: skip this frame
+      busy.add(tokenId);
+      try {
+        await OBR.scene.items.updateItems([tokenId], (items) => {
+          for (const item of items) {
+            if (item.type !== "IMAGE") continue;
+            // Save the real artwork on the token itself, once, so any client can restore it.
+            if (!item.metadata[META_KEY] && !item.image.url.startsWith("data:")) {
+              item.metadata[META_KEY] = item.image.url;
+            }
+            item.image.url = frame; // <- the Base64 data URL swap
+          }
+        });
+      } catch (e) {
+        console.warn("updateItems failed", e);
+      } finally {
+        busy.delete(tokenId);
+      }
+    }
+
+    async function restoreToken(tokenId) {
+      await OBR.scene.items.updateItems([tokenId], (items) => {
+        for (const item of items) {
+          const original = item.metadata[META_KEY];
+          if (item.type === "IMAGE" && original) {
+            item.image.url = original;      // put the real artwork back
+            delete item.metadata[META_KEY]; // token is back to normal
+          }
+        }
+      });
+    }
+
+    // ---- Receiving frames from other players -------------------------------
+    OBR.onReady(() => {
+      myId = OBR.player.id;
+
+      OBR.broadcast.onMessage(CHANNEL, (event) => {
+        const { playerId, tokenId, frame, stop } = event.data;
+        if (playerId === myId) return;
+        if (stop) restoreToken(tokenId);
+        else if (frame) applyFrame(tokenId, frame);
+      });
+
+      OBR.scene.isReady().then((ready) => ready && refreshTokens());
+      OBR.scene.onReadyChange((ready) => ready && refreshTokens());
+      OBR.scene.items.onChange(() => {
+        if (!popup) refreshTokens(); // don't reshuffle the list mid-stream
+      });
+    });
+
+    // ---- Relay: pop-out window -> everyone else ----------------------------
+    // The pop-out window captures the webcam and posts each frame here.
+    window.addEventListener("message", (e) => {
+      if (!popup || e.source !== popup) return; // only trust our own pop-out
+      const msg = e.data;
+      if (!msg) return;
+
+      if (msg.type === "ready") {
+        // Pop-out loaded: tell it our capture settings.
+        popup.postMessage({ type: "config", size: SIZE, fps: FPS, quality: QUALITY }, "*");
+      } else if (msg.type === "frame" && activeTokenId) {
+        // Broadcast to everyone else, tagged with our player ID...
+        OBR.broadcast.sendMessage(CHANNEL, { playerId: myId, tokenId: activeTokenId, frame: msg.frame });
+        // ...broadcast doesn't echo back to us, so update our own view directly.
+        applyFrame(activeTokenId, msg.frame);
+      }
+    });
+
+    // ---- Start / stop -------------------------------------------------------
+    function openCamera() {
+      if (!select.value) return setStatus("Pick a token first.");
+      activeTokenId = select.value;
+
+      // Must be called directly from the click so the browser allows the popup.
+      popup = window.open(
+        new URL("camera.html", location.href).href,
+        "obr-webcam",
+        "width=280,height=360"
+      );
+      if (!popup) {
+        activeTokenId = null;
+        return setStatus("Popup blocked. Allow popups for this site and try again.");
+      }
+
+      select.disabled = true;
+      btn.textContent = "Stop Camera";
+      btn.classList.add("live");
+      setStatus("Camera window opened. Click Start Camera in it.");
+
+      // Closing the pop-out window = stop.
+      watchTimer = setInterval(() => {
+        if (popup.closed) stopStreaming();
+      }, 1000);
+    }
+
+    async function stopStreaming() {
+      clearInterval(watchTimer);
+      watchTimer = null;
+      if (popup && !popup.closed) popup.close();
+      popup = null;
+
+      // Tell everyone to put the original artwork back, and do it locally too.
+      if (activeTokenId) {
+        OBR.broadcast.sendMessage(CHANNEL, { playerId: myId, tokenId: activeTokenId, stop: true });
+        await restoreToken(activeTokenId);
+      }
+      activeTokenId = null;
+      select.disabled = false;
+      btn.textContent = "Start Camera";
+      btn.classList.remove("live");
+      setStatus("Camera stopped.");
+      refreshTokens();
+    }
+
+    btn.addEventListener("click", () => (popup ? stopStreaming() : openCamera()));
+  </script>
+</body>
+</html>
