@@ -21,7 +21,7 @@
   <div id="status"></div>
 
   <script type="module">
-    import OBR, { buildShape } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm";
+    import OBR, { buildImage } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm";
 
     // ---- Config -------------------------------------------------------------
     const CHANNEL = "com.example.webcam-tokens/frame"; // webcam frames (broadcast)
@@ -30,6 +30,14 @@
     const SIZE = 128;      // capture resolution (SIZE x SIZE)
     const FPS = 10;        // frames per second
     const QUALITY = 0.3;   // JPEG quality (0-1)
+
+    // The placeholder is a REAL image token (frame.png, hosted next to this page) so other
+    // token extensions such as Stat Bubbles treat it like any other token.
+    // frame.png is 256x320: a 256x256 area for the webcam plus a 64px strip underneath
+    // where Stat Bubbles can draw its health bar without being covered by the video.
+    const FRAME_URL = new URL("frame.png", location.href).href;
+    const FRAME_W = 256, FRAME_H = 320;
+    const FRAME_CELLS = 2; // how many grid cells wide the frame is on the board
 
     const btn = document.getElementById("camBtn");
     const statusEl = document.getElementById("status");
@@ -42,13 +50,11 @@
 
     OBR.onReady(() => { myId = OBR.player.id; });
 
-    // ---- 1. Placeholder: a normal shared board item players can drag --------
+    // ---- 1. Placeholder: a normal shared token players can drag -------------
     async function addFrame() {
       const mine = await OBR.scene.items.getItems((i) => i.metadata?.[META]?.playerId === myId);
       if (mine.length) return setStatus("You already have a frame. Drag it around the board.");
 
-      const dpi = await OBR.scene.grid.getDpi();
-      const size = dpi * 2; // two grid cells wide
       // Drop it in the middle of what you are currently looking at.
       const center = await OBR.viewport.inverseTransformPoint({
         x: (await OBR.viewport.getWidth()) / 2,
@@ -56,13 +62,15 @@
       });
       const name = await OBR.player.getName();
 
-      const item = buildShape()
-        .width(size).height(size)
-        .shapeType("RECTANGLE")
-        .fillColor("#222639").fillOpacity(0.5)
-        .strokeColor("#bb99ff").strokeWidth(4)
-        .position({ x: center.x - size / 2, y: center.y - size / 2 })
-        .layer("CHARACTER")   // behaves like a token
+      // dpi = 256 means "256 image pixels per grid cell", so scale 1 is one cell wide
+      // and scale FRAME_CELLS is FRAME_CELLS cells wide, whatever the scene's grid size.
+      const item = buildImage(
+        { width: FRAME_W, height: FRAME_H, mime: "image/png", url: FRAME_URL },
+        { dpi: 256, offset: { x: FRAME_W / 2, y: FRAME_H / 2 } }
+      )
+        .scale({ x: FRAME_CELLS, y: FRAME_CELLS })
+        .position(center)
+        .layer("CHARACTER")   // a normal token on the Character layer
         .name(name)
         .metadata({ [META]: { playerId: myId } })
         .build();
