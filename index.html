@@ -22,7 +22,7 @@
 
   <script type="module">
     // The SDK ships as an ES module; this CDN build works in a plain <script type="module"> tag.
-    import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm";
+    import OBR, { buildImage } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm";
 
     // ---- Config -------------------------------------------------------------
     const CHANNEL = "com.example.webcam-tokens/frame"; // broadcast channel name
@@ -39,15 +39,13 @@
     // ---- State --------------------------------------------------------------
     let myId = null;          // this player's Owlbear ID
     let popup = null;         // the camera pop-out window
-    let received = 0;         // frames received from the pop-out (diagnostics)
-    let applied = 0;          // frames successfully written to the token (diagnostics)
-    const busyAt = new Map(); // tokenId -> when the in-flight update started
     let watchTimer = null;    // polls whether the pop-out was closed
     let activeTokenId = null; // token currently being streamed
-    // The original artwork URL is stored in the token's own metadata (see applyFrame),
-    // so ANY client can restore it, even after a reload or crash.
-    const META_KEY = "com.example.webcam-tokens/original";
-    const busy = new Set();         // tokenIds with an update in flight (drop frames instead of queueing)
+    let received = 0;         // frames received from the pop-out (diagnostics)
+    let applied = 0;          // frames drawn on a token (diagnostics)
+    let reported = false;     // only show the first error
+    const overlays = new Map();     // tokenId -> id of the local webcam overlay item
+    const busy = new Map();         // tokenId -> time the in-flight update started
 
     // ---- Token dropdown -----------------------------------------------------
     async function refreshTokens() {
@@ -66,53 +64,60 @@
       if (!items.length) setStatus("No tokens found in this scene.");
     }
 
-    // ---- Applying frames to tokens (runs on every client) ------------------
-    async function applyFrame(tokenId, frame) {
-      // Skip this frame if the previous update is still pending, unless it has hung for 3s.
-      if (busy.has(tokenId) && Date.now() - (busyAt.get(tokenId) || 0) < 3000) return;
-      busy.add(tokenId);
-      busyAt.set(tokenId, Date.now());
+    // ---- Drawing frames (runs on every client) -----------------------------
+    // Owlbear rejects Base64 images on SHARED items, so we don't edit the real token.
+    // Instead each client adds a LOCAL image item (never synced, so no limits) that is
+    // attached to the token: it follows the token's moves, rotation and scale.
+    async function showFrame(tokenId, frame) {
+      // Skip this frame if the previous one is still in flight (unless it hung for 3s).
+      if (busy.has(tokenId) && Date.now() - busy.get(tokenId) < 3000) return;
+      busy.set(tokenId, Date.now());
       try {
-        await OBR.scene.items.updateItems([tokenId], (items) => {
-          for (const item of items) {
-            if (item.type !== "IMAGE") continue;
-            // Save the real artwork on the token itself, once, so any client can restore it.
-            if (!item.metadata[META_KEY] && !item.image.url.startsWith("data:")) {
-              item.metadata[META_KEY] = item.image.url;
-            }
-            item.image.url = frame; // <- the Base64 data URL swap
-          }
-        });
-        applied++;
-        if (applied === 1) {
-          // Read the token back to see what Owlbear actually stored.
-          const [t] = await OBR.scene.items.getItems([tokenId]);
-          setStatus("First frame applied. Stored url starts: " + String(t?.image?.url).slice(0, 25));
+        const overlayId = overlays.get(tokenId);
+        if (!overlayId) {
+          // First frame: create the overlay using the token's own size/position/scale.
+          const [token] = await OBR.scene.items.getItems([tokenId]);
+          if (!token || token.type !== "IMAGE") return;
+          const overlay = buildImage(
+            { width: token.image.width, height: token.image.height, mime: "image/jpeg", url: frame },
+            { dpi: token.grid.dpi, offset: token.grid.offset }
+          )
+            .name("Webcam")
+            .position(token.position)
+            .rotation(token.rotation)
+            .scale(token.scale)
+            .layer("ATTACHMENT")
+            .attachedTo(tokenId)
+            .locked(true)
+            .disableHit(true) // clicks pass through to the real token
+            .build();
+          await OBR.scene.local.addItems([overlay]);
+          overlays.set(tokenId, overlay.id);
+        } else {
+          // Later frames: just swap the picture on the existing overlay.
+          await OBR.scene.local.updateItems([overlayId], (items) => {
+            for (const item of items) if (item.type === "IMAGE") item.image.url = frame;
+          });
         }
+        applied++;
       } catch (e) {
-        // Show the real reason once in the popover instead of spamming the console.
-        if (!applyFrame.reported) {
-          applyFrame.reported = true;
+        overlays.delete(tokenId); // overlay may be gone; recreate on the next frame
+        if (!reported) {
+          reported = true;
           const reason = e?.error?.message || e?.message || JSON.stringify(e);
-          const name = e?.error?.name || e?.name || "";
-          setStatus("Token update failed: " + name + " " + reason);
-          console.error("updateItems failed:", name, reason, e);
+          setStatus("Overlay failed: " + (e?.error?.name || e?.name || "") + " " + reason);
+          console.error("overlay failed:", e);
         }
       } finally {
         busy.delete(tokenId);
       }
     }
 
-    async function restoreToken(tokenId) {
-      await OBR.scene.items.updateItems([tokenId], (items) => {
-        for (const item of items) {
-          const original = item.metadata[META_KEY];
-          if (item.type === "IMAGE" && original) {
-            item.image.url = original;      // put the real artwork back
-            delete item.metadata[META_KEY]; // token is back to normal
-          }
-        }
-      });
+    async function removeOverlay(tokenId) {
+      const overlayId = overlays.get(tokenId);
+      if (!overlayId) return;
+      overlays.delete(tokenId);
+      try { await OBR.scene.local.deleteItems([overlayId]); } catch (e) { /* already gone */ }
     }
 
     // ---- Receiving frames from other players -------------------------------
@@ -122,8 +127,8 @@
       OBR.broadcast.onMessage(CHANNEL, (event) => {
         const { playerId, tokenId, frame, stop } = event.data;
         if (playerId === myId) return;
-        if (stop) restoreToken(tokenId);
-        else if (frame) applyFrame(tokenId, frame);
+        if (stop) removeOverlay(tokenId);
+        else if (frame) showFrame(tokenId, frame);
       });
 
       OBR.scene.isReady().then((ready) => ready && refreshTokens());
@@ -145,13 +150,13 @@
         popup.postMessage({ type: "config", size: SIZE, fps: FPS, quality: QUALITY }, "*");
       } else if (msg.type === "frame" && activeTokenId) {
         received++;
-        if (received % 20 === 0 && !applyFrame.reported) {
-          setStatus(`Frames received: ${received}, applied: ${applied}`);
+        if (received % 20 === 0 && !reported) {
+          setStatus(`Live. Frames sent: ${received}, drawn: ${applied}`);
         }
         // Broadcast to everyone else, tagged with our player ID...
         OBR.broadcast.sendMessage(CHANNEL, { playerId: myId, tokenId: activeTokenId, frame: msg.frame });
-        // ...broadcast doesn't echo back to us, so update our own view directly.
-        applyFrame(activeTokenId, msg.frame);
+        // ...broadcast doesn't echo back to us, so draw our own view directly.
+        showFrame(activeTokenId, msg.frame);
       }
     });
 
@@ -159,6 +164,7 @@
     function openCamera() {
       if (!select.value) return setStatus("Pick a token first.");
       activeTokenId = select.value;
+      received = 0; applied = 0; reported = false;
 
       // Must be called directly from the click so the browser allows the popup.
       popup = window.open(
@@ -188,10 +194,10 @@
       if (popup && !popup.closed) popup.close();
       popup = null;
 
-      // Tell everyone to put the original artwork back, and do it locally too.
+      // Tell everyone to remove the overlay (the real token was never changed).
       if (activeTokenId) {
         OBR.broadcast.sendMessage(CHANNEL, { playerId: myId, tokenId: activeTokenId, stop: true });
-        await restoreToken(activeTokenId);
+        await removeOverlay(activeTokenId);
       }
       activeTokenId = null;
       select.disabled = false;
