@@ -39,6 +39,9 @@
     // ---- State --------------------------------------------------------------
     let myId = null;          // this player's Owlbear ID
     let popup = null;         // the camera pop-out window
+    let received = 0;         // frames received from the pop-out (diagnostics)
+    let applied = 0;          // frames successfully written to the token (diagnostics)
+    const busyAt = new Map(); // tokenId -> when the in-flight update started
     let watchTimer = null;    // polls whether the pop-out was closed
     let activeTokenId = null; // token currently being streamed
     // The original artwork URL is stored in the token's own metadata (see applyFrame),
@@ -65,8 +68,10 @@
 
     // ---- Applying frames to tokens (runs on every client) ------------------
     async function applyFrame(tokenId, frame) {
-      if (busy.has(tokenId)) return; // previous update still pending: skip this frame
+      // Skip this frame if the previous update is still pending, unless it has hung for 3s.
+      if (busy.has(tokenId) && Date.now() - (busyAt.get(tokenId) || 0) < 3000) return;
       busy.add(tokenId);
+      busyAt.set(tokenId, Date.now());
       try {
         await OBR.scene.items.updateItems([tokenId], (items) => {
           for (const item of items) {
@@ -78,6 +83,12 @@
             item.image.url = frame; // <- the Base64 data URL swap
           }
         });
+        applied++;
+        if (applied === 1) {
+          // Read the token back to see what Owlbear actually stored.
+          const [t] = await OBR.scene.items.getItems([tokenId]);
+          setStatus("First frame applied. Stored url starts: " + String(t?.image?.url).slice(0, 25));
+        }
       } catch (e) {
         // Show the real reason once in the popover instead of spamming the console.
         if (!applyFrame.reported) {
@@ -133,6 +144,10 @@
         // Pop-out loaded: tell it our capture settings.
         popup.postMessage({ type: "config", size: SIZE, fps: FPS, quality: QUALITY }, "*");
       } else if (msg.type === "frame" && activeTokenId) {
+        received++;
+        if (received % 20 === 0 && !applyFrame.reported) {
+          setStatus(`Frames received: ${received}, applied: ${applied}`);
+        }
         // Broadcast to everyone else, tagged with our player ID...
         OBR.broadcast.sendMessage(CHANNEL, { playerId: myId, tokenId: activeTokenId, frame: msg.frame });
         // ...broadcast doesn't echo back to us, so update our own view directly.
