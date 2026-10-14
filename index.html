@@ -31,12 +31,13 @@
     const FPS = 10;        // frames per second
     const QUALITY = 0.3;   // JPEG quality (0-1)
 
-    // The placeholder is a REAL image token (frame.png, hosted next to this page) so other
-    // token extensions such as Stat Bubbles treat it like any other token.
-    // frame.png is 256x320: a 256x256 area for the webcam plus a 64px strip underneath
-    // where Stat Bubbles can draw its health bar without being covered by the video.
-    const FRAME_URL = new URL("frame.png", location.href).href;
-    const FRAME_W = 256, FRAME_H = 320;
+    // The placeholder is a REAL image token (frame-square.png, hosted next to this page) so
+    // other token extensions such as Stat Bubbles treat it like any other token.
+    // It is a perfect 256x256 square. The webcam is drawn smaller than the frame (see
+    // VIDEO_INSET / VIDEO_SIZE in overlay.html) so a dark border is left around it, with room
+    // along the bottom for Stat Bubbles' bars.
+    const FRAME_URL = new URL("frame-square.png", location.href).href;
+    const FRAME_W = 256, FRAME_H = 256;
     const FRAME_CELLS = 2; // how many grid cells wide the frame is on the board
 
     const btn = document.getElementById("camBtn");
