@@ -85,24 +85,24 @@
     // Size/position of the video area for a placeholder, in BOARD units.
     // For an image token the video fills the top square of the image; the strip below it
     // stays visible so other extensions (Stat Bubbles) can draw their bars there.
-    // How the webcam sits inside the frame, as fractions of the frame's width.
-    // Change these two numbers to resize / reposition the video inside the frame:
-    //   VIDEO_INSET: gap between the frame edge and the video (left, top)
-    //   VIDEO_SIZE:  width and height of the video (it is always square)
-    // Left/top gap + size + right/bottom gap must add up to 1.
-    const VIDEO_INSET = 28 / 256;  // ~11% gap on every side
-    const VIDEO_SIZE = 200 / 256;  // ~78% of the frame
+    // Layout of frame-padded.png (390 x 343 image pixels, 256 px = 1 grid cell):
+    //   - the visible frame is the 256x256 square at (67, 10); the rest is transparent
+    //     padding where Stat Bubbles draws its HP bar (bottom) and AC badge (sides)
+    //   - the webcam sits inside the frame with a thin dark border: a 224x224 square at (83, 26)
+    // These are IMAGE PIXELS, so they scale automatically with the token's size.
+    // If you edit the frame picture, change these four numbers to match.
+    const VIDEO_X = 83, VIDEO_Y = 26;   // top-left corner of the webcam inside the image
+    const VIDEO_W = 224, VIDEO_H = 224; // webcam size
 
     function geometry(item) {
       if (item.type === "IMAGE") {
         const k = gridDpi / item.grid.dpi;          // image pixels -> board units
         const sx = k * item.scale.x, sy = k * item.scale.y;
-        const iw = item.image.width;
         return {
-          w: VIDEO_SIZE * iw * sx,                  // square video area inside the frame
-          h: VIDEO_SIZE * iw * sy,
-          dx: VIDEO_INSET * iw * sx,                // video's top-left corner inside the image
-          dy: VIDEO_INSET * iw * sy,
+          w: VIDEO_W * sx,                          // webcam size in board units
+          h: VIDEO_H * sy,
+          dx: VIDEO_X * sx,                         // webcam's top-left corner inside the image
+          dy: VIDEO_Y * sy,
           ox: item.grid.offset.x * sx,              // rotation/anchor point inside the image
           oy: item.grid.offset.y * sy,
         };

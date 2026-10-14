@@ -31,14 +31,17 @@
     const FPS = 10;        // frames per second
     const QUALITY = 0.3;   // JPEG quality (0-1)
 
-    // The placeholder is a REAL image token (frame-square.png, hosted next to this page) so
+    // The placeholder is a REAL image token (frame-padded.png, hosted next to this page) so
     // other token extensions such as Stat Bubbles treat it like any other token.
-    // It is a perfect 256x256 square. The webcam is drawn smaller than the frame (see
-    // VIDEO_INSET / VIDEO_SIZE in overlay.html) so a dark border is left around it, with room
-    // along the bottom for Stat Bubbles' bars.
-    const FRAME_URL = new URL("frame-square.png", location.href).href;
-    const FRAME_W = 256, FRAME_H = 256;
-    const FRAME_CELLS = 2; // how many grid cells wide the frame is on the board
+    // The picture is a perfect 256x256 square frame (256 px = 1 grid cell) surrounded by
+    // TRANSPARENT padding: ~0.26 cell on the left/right and ~0.30 cell at the bottom.
+    // Stat Bubbles draws its HP bar and AC badge at the edges of the token's image, so they
+    // land in that empty padding, OUTSIDE the visible frame, and the webcam can fill the frame.
+    const FRAME_URL = new URL("frame-padded.png", location.href).href;
+    const FRAME_W = 390, FRAME_H = 343;
+    // 1 = the visible frame is exactly one grid square (a standard 5 ft space).
+    // Raise it (e.g. 1.5 or 2) for a bigger webcam; the padding grows with it.
+    const FRAME_SCALE = 1.5;
 
     const btn = document.getElementById("camBtn");
     const statusEl = document.getElementById("status");
@@ -63,13 +66,13 @@
       });
       const name = await OBR.player.getName();
 
-      // dpi = 256 means "256 image pixels per grid cell", so scale 1 is one cell wide
-      // and scale FRAME_CELLS is FRAME_CELLS cells wide, whatever the scene's grid size.
+      // dpi = 256 means "256 image pixels per grid cell", so at scale 1 the visible frame is
+      // exactly one cell wide, whatever the scene's grid size. The anchor is the image centre.
       const item = buildImage(
         { width: FRAME_W, height: FRAME_H, mime: "image/png", url: FRAME_URL },
         { dpi: 256, offset: { x: FRAME_W / 2, y: FRAME_H / 2 } }
       )
-        .scale({ x: FRAME_CELLS, y: FRAME_CELLS })
+        .scale({ x: FRAME_SCALE, y: FRAME_SCALE })
         .position(center)
         .layer("CHARACTER")   // a normal token on the Character layer
         .name(name)
